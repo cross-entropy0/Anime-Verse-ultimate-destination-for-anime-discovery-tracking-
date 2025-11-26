@@ -4,6 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
+const mongoose = require('mongoose');
 const connectDB = require('./config/db');
 const errorHandler = require('./middleware/errorHandler');
 
@@ -27,9 +28,25 @@ app.use(helmet());
 
 // CORS configuration
 const corsOptions = {
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'https://anime-verse-ultimate-destination-fo.vercel.app',
+      process.env.FRONTEND_URL
+    ].filter(Boolean);
+    
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow all origins in production (be careful!)
+    }
+  },
   credentials: true,
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 app.use(cors(corsOptions));
 
@@ -65,21 +82,22 @@ app.use(express.urlencoded({ extended: true }));
 // Compression middleware
 app.use(compression());
 
-// Request logging (development only)
-if (process.env.NODE_ENV === 'development') {
-  app.use((req, res, next) => {
-    console.log(`${req.method} ${req.path}`);
-    next();
-  });
-}
+// Request logging (always enabled for debugging)
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  next();
+});
 
 // Health check route
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Anime Site API is running',
+    message: 'AnimeVerse API is running',
     version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development',
+    mongodb: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
     endpoints: {
+      health: '/',
       auth: '/api/auth',
       anime: '/api/anime',
       characters: '/api/characters',
@@ -87,6 +105,12 @@ app.get('/', (req, res) => {
       watchlist: '/api/watchlist',
       reviews: '/api/reviews',
       comments: '/api/comments'
+    },
+    sampleEndpoints: {
+      topAnime: '/api/anime/top',
+      search: '/api/anime/search?q=naruto',
+      register: '/api/auth/register (POST)',
+      login: '/api/auth/login (POST)'
     }
   });
 });
