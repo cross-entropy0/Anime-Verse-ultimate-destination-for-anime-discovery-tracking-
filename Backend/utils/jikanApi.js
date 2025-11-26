@@ -95,7 +95,7 @@ const transformAnimeData = (jikanAnime) => {
       time: jikanAnime.broadcast.time,
       timezone: jikanAnime.broadcast.timezone
     } : {},
-    rating: jikanAnime.rating,
+    rating: jikanAnime.rating, 
     genres: jikanAnime.genres?.map(g => g.name) || [],
     themes: jikanAnime.themes?.map(t => t.name) || [],
     demographics: jikanAnime.demographics?.map(d => d.name) || [],
