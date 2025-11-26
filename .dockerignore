@@ -1,0 +1,11 @@
+# Backend Dockerfile
+Backend/Dockerfile
+Backend/.dockerignore
+
+# Frontend Dockerfile  
+Frontend/Dockerfile
+Frontend/.dockerignore
+Frontend/nginx.conf
+
+# Docker volumes
+mongodb_data/

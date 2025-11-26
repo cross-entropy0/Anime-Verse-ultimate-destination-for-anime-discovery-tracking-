@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: animeverse-mongodb
+    restart: unless-stopped
+    ports:
+      - "27018:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=anime-site
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - animeverse-network
+
+  # Mongo Express - Database GUI
+  mongo-express:
+    image: mongo-express:latest
+    container_name: animeverse-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongodb
+      - ME_CONFIG_MONGODB_PORT=27017
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=admin123
+    depends_on:
+      - mongodb
+    networks:
+      - animeverse-network
+
+  # Backend API
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: animeverse-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/anime-site
+      - JWT_SECRET=${JWT_SECRET:-your_super_secret_jwt_key_change_this}
+      - PORT=3000
+      - NODE_ENV=production
+      - JIKAN_API_URL=https://api.jikan.moe/v4
+      - FRONTEND_URL=http://localhost:5173
+    depends_on:
+      - mongodb
+    networks:
+      - animeverse-network
+    volumes:
+      - ./Backend:/app
+      - /app/node_modules
+
+  # Frontend
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+    container_name: animeverse-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://localhost:3000/api
+    depends_on:
+      - backend
+    networks:
+      - animeverse-network
+
+networks:
+  animeverse-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
