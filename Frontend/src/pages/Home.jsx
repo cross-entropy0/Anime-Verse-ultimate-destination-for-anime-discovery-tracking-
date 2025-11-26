@@ -20,14 +20,14 @@ const Home = () => {
 
         // Fetch spotlight anime (top 5 for slider)
         const spotlightResponse = await animeService.getTopAnime({ limit: 5 });
-        console.log('Spotlight response:', spotlightResponse);
+        // console.log('Spotlight response:', spotlightResponse);
         if (spotlightResponse.success && spotlightResponse.data) {
           setSpotlightAnime(spotlightResponse.data);
         }
 
         // Fetch trending anime (top 10 for sidebar)
         const trendingResponse = await animeService.getTopAnime({ limit: 10, page: 2 });
-        console.log('Trending response:', trendingResponse);
+        // console.log('Trending response:', trendingResponse);
         if (trendingResponse.success && trendingResponse.data) {
           setTrendingAnime(trendingResponse.data);
         }
@@ -37,16 +37,17 @@ const Home = () => {
           status: 'airing',
           order_by: 'start_date',
           sort: 'desc',
-          limit: 18,
+          limit: 22,
         });
-        console.log('Latest response:', latestResponse);
+        // console.log('Latest response:', latestResponse);
+
         if (latestResponse.success && latestResponse.data) {
           setLatestAnime(latestResponse.data);
         }
 
         // Fetch top rated for grid - increased to 30
         const topResponse = await animeService.getTopAnime({ limit: 30 });
-        console.log('Top response:', topResponse);
+        // console.log('Top response:', topResponse);
         if (topResponse.success && topResponse.data) {
           setTopAnime(topResponse.data);
         }
@@ -183,9 +184,8 @@ const Home = () => {
                       <button
                         key={index}
                         onClick={() => setCurrentSpotlight(index)}
-                        className={`w-2 h-2 rounded-full transition-all ${
-                          index === currentSpotlight ? 'bg-primary w-8' : 'bg-white/50 hover:bg-white/80'
-                        }`}
+                        className={`w-2 h-2 rounded-full transition-all ${index === currentSpotlight ? 'bg-primary w-8' : 'bg-white/50 hover:bg-white/80'
+                          }`}
                       />
                     ))}
                   </div>
@@ -194,7 +194,7 @@ const Home = () => {
             </div>
 
             {/* Trending Sidebar */}
-            <div className="bg-dark-100 rounded-xl p-4">
+            <div className=" bg-dark-100 rounded-xl p-4">
               <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
                 <span className="text-primary">🔥</span>
                 Top Trending
@@ -243,14 +243,15 @@ const Home = () => {
         {/* Latest Episodes */}
         {latestAnime.length > 0 && (
           <section>
-            <div className="flex items-center justify-between mb-6">
+            <div className=" flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-white">Latest Episodes</h2>
               <Link to="/browse?status=airing" className="text-primary hover:text-primary/80 font-medium">
                 View All →
               </Link>
             </div>
-            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            <div className=" grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
               {latestAnime.slice(0, 12).map((anime) => (
+                anime?.genres.includes('Hentai') === false &&
                 <Link
                   key={anime.malId}
                   to={`/anime/${anime.malId}`}
@@ -281,6 +282,8 @@ const Home = () => {
                   </h3>
                   <p className="text-gray-400 text-xs mt-1">{anime.type}</p>
                 </Link>
+
+
               ))}
             </div>
           </section>
