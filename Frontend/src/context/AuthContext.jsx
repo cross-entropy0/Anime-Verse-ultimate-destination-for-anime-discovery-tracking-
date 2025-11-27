@@ -27,7 +27,7 @@ export const AuthProvider = ({ children }) => {
           setUser(storedUser);
           setIsAuthenticated(true);
           
-          // Verify token with server
+          // Optionally verify token with server (but don't logout on failure)
           try {
             const response = await authService.getCurrentUser();
             if (response.success) {
@@ -35,15 +35,15 @@ export const AuthProvider = ({ children }) => {
               localStorage.setItem('user', JSON.stringify(response.data));
             }
           } catch (error) {
-            // Token invalid, clear storage
-            authService.logout();
-            setUser(null);
-            setIsAuthenticated(false);
+            // Keep user logged in even if verification fails
+            // This prevents random logouts when server is slow or has errors
+            console.warn('Could not verify token, keeping user logged in:', error.message);
           }
         }
       } catch (error) {
         console.error('Auth initialization error:', error);
       } finally {
+        console.log('[AuthContext] Setting loading to false');
         setLoading(false);
       }
     };

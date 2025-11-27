@@ -18,6 +18,10 @@ const addToWatchlistValidation = [
     .withMessage('MAL ID is required')
     .isInt({ min: 1 })
     .withMessage('Invalid MAL ID'),
+  body('isManga')
+    .optional()
+    .isBoolean()
+    .withMessage('isManga must be a boolean'),
   body('status')
     .optional()
     .isIn(['watching', 'completed', 'plan-to-watch', 'dropped'])

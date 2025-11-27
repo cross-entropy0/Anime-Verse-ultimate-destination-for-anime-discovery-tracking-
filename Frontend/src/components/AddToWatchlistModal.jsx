@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import { watchlistService } from '../services/watchlistService';
 import { useAuth } from '../context/AuthContext';
+import Toast from './Toast';
 
-const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
+const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess, isManga = false }) => {
   const { isAuthenticated } = useAuth();
   const [formData, setFormData] = useState({
     status: 'plan-to-watch',
@@ -13,6 +14,10 @@ const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [existingEntry, setExistingEntry] = useState(null);
+  const [showToast, setShowToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const totalEpisodes = isManga ? (anime?.chapters || 9999) : (anime?.episodes || 9999);
 
   useEffect(() => {
     if (isOpen && anime) {
@@ -42,18 +47,35 @@ const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
     setError('');
 
     try {
+      // Auto-fill episodes if status is completed
+      const submitData = {
+        ...formData,
+        episodesWatched: formData.status === 'completed' ? totalEpisodes : formData.episodesWatched,
+      };
+
       if (existingEntry) {
         // Update existing entry
-        await watchlistService.updateWatchlistItem(existingEntry._id, formData);
+        await watchlistService.updateWatchlistItem(existingEntry._id, submitData);
+        // Show success message
+        setToastMessage(isManga ? 'Reading list updated!' : 'Watchlist updated!');
       } else {
         // Add new entry
         await watchlistService.addToWatchlist({
           malId: anime.malId || anime.mal_id,
-          ...formData,
+          isManga: isManga,
+          ...submitData,
         });
+        // Show success message
+        setToastMessage(isManga ? 'Added to reading list!' : 'Added to watchlist!');
       }
-      onSuccess?.();
-      onClose();
+      setShowToast(true);
+      setTimeout(async () => {
+        if (onSuccess) {
+          await onSuccess();
+        } else {
+          onClose();
+        }
+      }, 500);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to update watchlist');
     } finally {
@@ -66,8 +88,11 @@ const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
     
     try {
       await watchlistService.removeFromWatchlist(existingEntry._id);
-      onSuccess?.();
-      onClose();
+      if (onSuccess) {
+        await onSuccess();
+      } else {
+        onClose();
+      }
     } catch (err) {
       setError('Failed to remove from watchlist');
     }
@@ -75,6 +100,10 @@ const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
 
   if (!isOpen) return null;
   if (!isAuthenticated) return null;
+
+  const showEpisodesField = formData.status !== 'plan-to-watch';
+  const showRatingField = formData.status !== 'plan-to-watch';
+  const episodesLabel = isManga ? 'Chapters Read' : 'Episodes Watched';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={onClose}>
@@ -107,41 +136,49 @@ const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
               onChange={(e) => setFormData({ ...formData, status: e.target.value })}
               className="w-full bg-dark-300 border border-dark-400 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
             >
-              <option value="watching">📺 Watching</option>
+              <option value="watching">{isManga ? '📖 Reading' : '📺 Watching'}</option>
               <option value="completed">✔️ Completed</option>
-              <option value="plan-to-watch">📝 Plan to Watch</option>
+              <option value="plan-to-watch">{isManga ? '📝 Plan to Read' : '📝 Plan to Watch'}</option>
               <option value="dropped">🚫 Dropped</option>
             </select>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Episodes Watched
-            </label>
-            <input
-              type="number"
-              min="0"
-              max={anime?.episodes || 9999}
-              value={formData.episodesWatched}
-              onChange={(e) => setFormData({ ...formData, episodesWatched: parseInt(e.target.value) || 0 })}
-              className="w-full bg-dark-300 border border-dark-400 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
+          {showEpisodesField && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                {episodesLabel}
+                {formData.status === 'completed' && totalEpisodes !== 9999 && (
+                  <span className="text-xs text-gray-500 ml-2">(Auto-filled on save)</span>
+                )}
+              </label>
+              <input
+                type="number"
+                min="0"
+                max={totalEpisodes}
+                value={formData.status === 'completed' ? totalEpisodes : formData.episodesWatched}
+                onChange={(e) => setFormData({ ...formData, episodesWatched: parseInt(e.target.value) || 0 })}
+                disabled={formData.status === 'completed'}
+                className="w-full bg-dark-300 border border-dark-400 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+            </div>
+          )}
 
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              Your Rating (0-10)
-            </label>
-            <input
-              type="number"
-              min="0"
-              max="10"
-              step="0.5"
-              value={formData.userRating}
-              onChange={(e) => setFormData({ ...formData, userRating: parseFloat(e.target.value) || 0 })}
-              className="w-full bg-dark-300 border border-dark-400 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
+          {showRatingField && (
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Your Rating (0-10)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="10"
+                step="0.5"
+                value={formData.userRating}
+                onChange={(e) => setFormData({ ...formData, userRating: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-dark-300 border border-dark-400 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+          )}
 
           <div className="flex gap-3 pt-4">
             <button
@@ -163,6 +200,15 @@ const AddToWatchlistModal = ({ anime, isOpen, onClose, onSuccess }) => {
           </div>
         </form>
       </div>
+
+      {/* Success Toast */}
+      {showToast && (
+        <Toast
+          message={toastMessage}
+          type="success"
+          onClose={() => setShowToast(false)}
+        />
+      )}
     </div>
   );
 };

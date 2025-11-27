@@ -8,6 +8,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 15000, // 15 second timeout for all requests
 });
 
 // Request interceptor to add auth token
@@ -28,15 +29,25 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Handle timeout errors
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      console.error('Request timeout - server is taking too long to respond');
+      error.userMessage = 'Request timed out. The server is busy, please try again.';
+    }
+    
+    // Log errors for debugging
     if (error.response?.status === 401) {
-      // Token expired or invalid
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
-    } else if (error.response?.status === 429) {
+      console.log('401 Error:', error.response?.data);
+    }
+    
+    // Don't auto-logout on 401 errors - let components handle it
+    // This prevents random logouts while browsing
+    if (error.response?.status === 429) {
       // Rate limit - show user-friendly message
       console.warn('Rate limit reached. Some content may be temporarily unavailable.');
+      error.userMessage = 'Too many requests. Please wait a moment.';
     }
+    
     return Promise.reject(error);
   }
 );

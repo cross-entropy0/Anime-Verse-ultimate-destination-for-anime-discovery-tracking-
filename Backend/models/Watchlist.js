@@ -37,6 +37,10 @@ const watchlistSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  isManga: {
+    type: Boolean,
+    default: false
+  },
   startedAt: Date,
   completedAt: Date
 }, {

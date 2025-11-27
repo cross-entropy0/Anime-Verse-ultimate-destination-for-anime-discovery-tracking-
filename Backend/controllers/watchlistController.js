@@ -13,23 +13,47 @@ const getWatchlist = async (req, res, next) => {
 
     const watchlist = await Watchlist.find(query).sort({ updatedAt: -1 });
 
-    // Populate with fresh anime data from cached API
-    const populatedWatchlist = await Promise.all(
-      watchlist.map(async (item) => {
-        try {
-          const anime = await jikanApi.fetchAnimeById(item.malId);
-          return {
-            ...item.toObject(),
-            anime
+    // Return cached data immediately, don't wait for API calls
+    // This prevents slow response times and rate limit issues
+    const populatedWatchlist = await Promise.all(watchlist.map(async (item) => {
+      const itemObj = item.toObject();
+      let animeData = itemObj.animeData;
+      
+      // If animeData is missing or incomplete, try to get from cache
+      if (!animeData || !animeData.title || !animeData.imageUrl) {
+        console.log(`Missing data for ${itemObj.isManga ? 'manga' : 'anime'} ${itemObj.malId}, checking cache...`);
+        const CacheModel = itemObj.isManga ? require('../models/Manga') : require('../models/Anime');
+        const cached = await CacheModel.findOne({ malId: itemObj.malId });
+        
+        if (cached) {
+          const cachedObj = cached.toObject ? cached.toObject() : cached;
+          animeData = {
+            title: cachedObj.title || cachedObj.titleEnglish || animeData?.title || 'Unknown',
+            imageUrl: cachedObj.imageUrl || animeData?.imageUrl || null,
+            episodes: itemObj.isManga ? (cachedObj.chapters || animeData?.episodes || 0) : (cachedObj.episodes || animeData?.episodes || 0)
           };
-        } catch (error) {
-          return {
-            ...item.toObject(),
-            anime: item.animeData || { title: 'Unknown', malId: item.malId }
-          };
+          
+          // Update the database entry for future requests
+          await Watchlist.updateOne(
+            { _id: itemObj._id },
+            { $set: { animeData } }
+          );
+          
+          console.log(`Updated cache data for ${itemObj.malId}:`, animeData);
         }
-      })
-    );
+      }
+      
+      const anime = {
+        ...(animeData || { title: 'Unknown' }),
+        malId: itemObj.malId,
+        isManga: itemObj.isManga || false
+      };
+      
+      return {
+        ...itemObj,
+        anime
+      };
+    }));
 
     res.json({
       success: true,
@@ -40,25 +64,14 @@ const getWatchlist = async (req, res, next) => {
   }
 };
 
-// @desc    Add anime to watchlist
+// @desc    Add anime/manga to watchlist
 // @route   POST /api/watchlist
 // @access  Private
 const addToWatchlist = async (req, res, next) => {
   try {
-    const { malId, status = 'plan-to-watch', episodesWatched = 0, userRating } = req.body;
+    const { malId, status = 'plan-to-watch', episodesWatched = 0, userRating, isManga = false } = req.body;
 
-    // Fetch anime data from Jikan API to validate and cache
-    let animeData;
-    try {
-      animeData = await jikanApi.fetchAnimeById(malId);
-    } catch (error) {
-      return res.status(404).json({
-        success: false,
-        message: 'Anime not found'
-      });
-    }
-
-    // Check if already in watchlist
+    // Check if already in watchlist first
     const existing = await Watchlist.findOne({
       userId: req.user._id,
       malId
@@ -67,29 +80,99 @@ const addToWatchlist = async (req, res, next) => {
     if (existing) {
       return res.status(400).json({
         success: false,
-        message: 'Anime already in watchlist'
+        message: 'Already in watchlist'
       });
     }
+
+    // Get data from cache ONLY - never make API calls here to avoid blocking
+    const CacheModel = isManga ? require('../models/Manga') : require('../models/Anime');
+    const cached = await CacheModel.findOne({ malId });
+    
+    console.log(`Adding ${isManga ? 'manga' : 'anime'} ${malId} to watchlist. Cached:`, !!cached);
+    
+    let contentData;
+    if (cached) {
+      // Use cached data - convert Mongoose doc to plain object
+      const cachedObj = cached.toObject ? cached.toObject() : cached;
+      console.log('Cached data fields:', { 
+        title: cachedObj.title, 
+        titleEnglish: cachedObj.titleEnglish,
+        imageUrl: cachedObj.imageUrl,
+        hasImages: !!cachedObj.images,
+        chapters: cachedObj.chapters,
+        episodes: cachedObj.episodes
+      });
+      
+      contentData = {
+        title: cachedObj.title || cachedObj.titleEnglish || `${isManga ? 'Manga' : 'Anime'} #${malId}`,
+        imageUrl: cachedObj.imageUrl || cachedObj.images?.jpg?.large_image_url || cachedObj.images?.jpg?.image_url || null,
+        episodes: isManga ? (cachedObj.chapters || 0) : (cachedObj.episodes || 0)
+      };
+    } else {
+      // No cache - use minimal placeholder AND trigger background fetch
+      console.log('No cache found, using placeholder and fetching in background');
+      contentData = {
+        title: `${isManga ? 'Manga' : 'Anime'} #${malId}`,
+        imageUrl: null,
+        episodes: 0
+      };
+      
+      // Trigger background fetch to cache the data (don't wait for it)
+      const jikanApi = require('../utils/jikanApi');
+      const fetchPromise = isManga 
+        ? jikanApi.fetchMangaById(malId)
+        : jikanApi.fetchAnimeById(malId);
+      
+      fetchPromise.then(async (data) => {
+        console.log(`Background fetch complete for ${isManga ? 'manga' : 'anime'} ${malId}`);
+        // Update the watchlist item with fetched data
+        const dataObj = data.toObject ? data.toObject() : data;
+        await Watchlist.updateOne(
+          { userId: req.user._id, malId },
+          {
+            $set: {
+              animeData: {
+                title: dataObj.title || dataObj.titleEnglish,
+                imageUrl: dataObj.imageUrl,
+                episodes: isManga ? (dataObj.chapters || 0) : (dataObj.episodes || 0)
+              }
+            }
+          }
+        );
+        console.log(`Updated watchlist entry with fresh data for ${malId}`);
+      }).catch(err => {
+        console.error(`Background fetch failed for ${isManga ? 'manga' : 'anime'} ${malId}:`, err.message);
+      });
+    }
+    
+    console.log('Saving to watchlist:', contentData);
 
     const watchlistItem = await Watchlist.create({
       userId: req.user._id,
       malId,
       animeData: {
-        title: animeData.title,
-        imageUrl: animeData.imageUrl,
-        episodes: animeData.episodes
+        title: contentData.title,
+        imageUrl: contentData.imageUrl,
+        episodes: contentData.episodes
       },
       status,
       episodesWatched,
-      userRating
+      userRating,
+      isManga
     });
 
     res.status(201).json({
       success: true,
-      message: 'Added to watchlist',
+      message: isManga ? 'Added to reading list' : 'Added to watchlist',
       data: {
         ...watchlistItem.toObject(),
-        anime: animeData
+        anime: {
+          title: contentData.title,
+          imageUrl: contentData.imageUrl,
+          episodes: contentData.episodes,
+          malId,
+          isManga
+        }
       }
     });
   } catch (error) {
@@ -124,13 +207,8 @@ const updateWatchlistItem = async (req, res, next) => {
 
     await watchlistItem.save();
 
-    // Fetch anime data
-    let anime;
-    try {
-      anime = await jikanApi.fetchAnimeById(watchlistItem.malId);
-    } catch (error) {
-      anime = watchlistItem.animeData || { title: 'Unknown', malId: watchlistItem.malId };
-    }
+    // Return cached data to avoid rate limits
+    const anime = watchlistItem.animeData || { title: 'Unknown', malId: watchlistItem.malId };
 
     res.json({
       success: true,

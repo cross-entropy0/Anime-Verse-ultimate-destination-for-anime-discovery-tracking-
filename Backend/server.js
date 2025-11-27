@@ -55,7 +55,7 @@ app.use((req, res, next) => {
 // Rate limiting - separate limits for different routes
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 30, // 30 requests per minute per IP
+  max: 100, // 100 requests per minute per IP (more reasonable)
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -80,6 +80,27 @@ app.use('/api/auth/register', authLimiter);
 // Body parser middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Request timeout middleware - prevent hanging requests
+app.use((req, res, next) => {
+  // Set a timeout for all requests (20 seconds)
+  req.setTimeout(20000, () => {
+    console.error(`Request timeout: ${req.method} ${req.path}`)
+    if (!res.headersSent) {
+      res.status(408).json({
+        success: false,
+        message: 'Request timeout - please try again'
+      });
+    }
+  });
+  
+  // Set response timeout
+  res.setTimeout(20000, () => {
+    console.error(`Response timeout: ${req.method} ${req.path}`);
+  });
+  
+  next();
+});
 
 // Compression middleware
 app.use(compression());

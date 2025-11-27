@@ -93,7 +93,10 @@ const Dashboard = () => {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
               {continueWatching.slice(0, 5).map((item) => (
                 <div key={item._id}>
-                  <AnimeCard anime={item.anime} />
+                  <AnimeCard
+                    anime={item.anime}
+                    type={item.isManga ? 'manga' : 'anime'}
+                  />
                   <div className="mt-2">
                     <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>Episode {item.episodesWatched || 0}</span>
@@ -102,7 +105,7 @@ const Dashboard = () => {
                     <div className="w-full bg-dark-300 rounded-full h-1.5">
                       <div
                         className="bg-primary h-1.5 rounded-full"
-                        style={{ width: `${(item.episodesWatched / (item.anime?.episodes || 1)) * 100}%` }}
+                        style={{ width: `${Math.min(((item.episodesWatched || 0) / (item.anime?.episodes || 1)) * 100, 100)}%` }}
                       ></div>
                     </div>
                   </div>
@@ -122,9 +125,31 @@ const Dashboard = () => {
             <Carousel
               items={recentlyWatched}
               slidesToShow={5}
-              renderItem={(item) => <AnimeCard anime={item.anime} />}
+              renderItem={(item) => (
+                <AnimeCard
+                  anime={item.anime}
+                  type={item.isManga ? 'manga' : 'anime'}
+                />
+              )}
             />
           </section>
+        )}
+
+
+
+        {/* Empty State */}
+        {continueWatching.length === 0 && recentlyWatched.length === 0 && (
+          <div className="text-center py-20">
+            <div className="text-6xl mb-4">🍿</div>
+            <h3 className="text-2xl font-semibold text-white mb-2">Your Dashboard is Empty</h3>
+            <p className="text-gray-400 mb-6">Start watching anime to see your activity here</p>
+            <Link
+              to="/browse"
+              className="inline-block bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-semibold"
+            >
+              Explore Anime
+            </Link>
+          </div>
         )}
 
         {/* Recommendations */}
@@ -143,20 +168,7 @@ const Dashboard = () => {
           </section>
         )}
 
-        {/* Empty State */}
-        {continueWatching.length === 0 && recentlyWatched.length === 0 && (
-          <div className="text-center py-20">
-            <div className="text-6xl mb-4">🍿</div>
-            <h3 className="text-2xl font-semibold text-white mb-2">Your Dashboard is Empty</h3>
-            <p className="text-gray-400 mb-6">Start watching anime to see your activity here</p>
-            <Link
-              to="/browse"
-              className="inline-block bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-semibold"
-            >
-              Explore Anime
-            </Link>
-          </div>
-        )}
+
       </div>
     </div>
   );

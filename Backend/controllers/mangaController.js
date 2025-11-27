@@ -36,19 +36,36 @@ const getMangaById = async (req, res, next) => {
   try {
     const { id } = req.params;
     
-    const manga = await jikanApi.fetchMangaById(id);
-
-    if (!manga) {
-      return res.status(404).json({
-        success: false,
-        message: 'Manga not found'
+    // Try API first with error handling
+    try {
+      const manga = await jikanApi.fetchMangaById(id);
+      if (!manga) {
+        return res.status(404).json({
+          success: false,
+          message: 'Manga not found'
+        });
+      }
+      return res.json({
+        success: true,
+        data: manga
       });
+    } catch (apiError) {
+      // Fallback to cache if API fails
+      console.error('Manga API error, checking cache:', apiError.message);
+      const Manga = require('../models/Manga');
+      const cached = await Manga.findOne({ malId: parseInt(id) });
+      
+      if (cached) {
+        return res.json({
+          success: true,
+          data: cached,
+          cached: true
+        });
+      }
+      
+      // No cache - throw error to outer catch
+      throw apiError;
     }
-
-    res.json({
-      success: true,
-      data: manga
-    });
   } catch (error) {
     console.error('Manga fetch error:', error);
     if (error.response?.status === 404) {
@@ -115,7 +132,14 @@ const getMangaRecommendations = async (req, res, next) => {
       data: recommendations
     });
   } catch (error) {
-    next(error);
+    console.error(`❌ Error fetching recommendations for manga ${req.params.id}:`, error.message);
+    console.error('Error details:', error.response?.data || error);
+    // Return empty array on error instead of failing
+    res.json({
+      success: true,
+      data: [],
+      message: 'Recommendations temporarily unavailable'
+    });
   }
 };
 

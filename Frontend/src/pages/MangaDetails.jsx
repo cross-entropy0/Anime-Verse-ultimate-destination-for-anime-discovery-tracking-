@@ -1,37 +1,54 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { mangaService } from '../services/mangaService';
+import { watchlistService } from '../services/watchlistService';
+import { useAuth } from '../context/AuthContext';
 import ImageGallery from '../components/ImageGallery';
 import CharacterCard from '../components/CharacterCard';
 import Loader from '../components/Loader';
-import { PlusIcon, HeartIcon, ShareIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import { HeartIcon as HeartIconSolid, StarIcon } from '@heroicons/react/24/solid';
+import AddToWatchlistModal from '../components/AddToWatchlistModal';
+import { PlusIcon, ShareIcon, ChevronDownIcon, ChevronUpIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { StarIcon } from '@heroicons/react/24/solid';
 
 const MangaDetails = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const [manga, setManga] = useState(null);
   const [characters, setCharacters] = useState([]);
   const [pictures, setPictures] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showFullSynopsis, setShowFullSynopsis] = useState(false);
-  const [isFavorite, setIsFavorite] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [showShareTooltip, setShowShareTooltip] = useState(false);
+  const [watchlistEntry, setWatchlistEntry] = useState(null);
 
   useEffect(() => {
     const fetchMangaDetails = async () => {
       try {
         setLoading(true);
 
+        // Fetch main manga data first
         const mangaData = await mangaService.getById(id);
         setManga(mangaData.data);
 
+        // Helper function to add delay between requests
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // Fetch remaining data sequentially with delays to avoid rate limiting
+        await delay(400);
         const charactersData = await mangaService.getCharacters(id);
         setCharacters(charactersData.data || []);
 
+        await delay(400);
         const picturesData = await mangaService.getPictures(id);
+        console.log('[MangaDetails] Pictures data:', picturesData);
         setPictures(picturesData.data || []);
 
+        await delay(400);
         const recsData = await mangaService.getRecommendations(id);
+        console.log('[MangaDetails] Recommendations data:', recsData);
         setRecommendations(recsData.data?.slice(0, 10) || []);
       } catch (error) {
         console.error('Error fetching manga details:', error);
@@ -42,6 +59,33 @@ const MangaDetails = () => {
 
     fetchMangaDetails();
   }, [id]);
+
+  // Separate useEffect for watchlist status check
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      checkWatchlistStatus();
+    } else if (!authLoading && !isAuthenticated) {
+      setWatchlistEntry(null);
+    }
+  }, [id, isAuthenticated, authLoading]);
+
+  const checkWatchlistStatus = async () => {
+    try {
+      const entry = await watchlistService.checkInWatchlist(parseInt(id));
+      console.log('Watchlist check for manga malId:', parseInt(id), 'Result:', entry);
+      setWatchlistEntry(entry);
+    } catch (error) {
+      console.error('Error checking watchlist:', error);
+    }
+  };
+
+  const handleAddToList = () => {
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: `/manga/${id}` } });
+      return;
+    }
+    setShowModal(true);
+  };
 
   if (loading) return <Loader fullScreen />;
 
@@ -63,6 +107,25 @@ const MangaDetails = () => {
   const imageUrl = manga.imageUrl || manga.images?.jpg?.large_image_url || manga.images?.jpg?.image_url;
   const synopsis = manga.synopsis || 'No synopsis available.';
   const shouldTruncateSynopsis = synopsis.length > 300;
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: manga.title,
+          text: `Check out ${manga.title} on AnimeVerse!`,
+          url: url,
+        });
+      } catch (err) {
+        console.log('Share canceled');
+      }
+    } else {
+      navigator.clipboard.writeText(url);
+      setShowShareTooltip(true);
+      setTimeout(() => setShowShareTooltip(false), 2000);
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -104,18 +167,68 @@ const MangaDetails = () => {
           <div className="lg:col-span-2 space-y-8">
             {/* Action Buttons */}
             <div className="flex gap-3">
-              <button className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-semibold transition-all">
-                <PlusIcon className="w-5 h-5" />
-                <span>Add to List</span>
-              </button>
-              <button
-                onClick={() => setIsFavorite(!isFavorite)}
-                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold ${
-                  isFavorite ? 'bg-red-500 text-white' : 'bg-dark-200 text-white'
+              <button 
+                onClick={handleAddToList}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold transition-all hover:scale-105 shadow-lg ${
+                  watchlistEntry
+                    ? watchlistEntry.status === 'watching'
+                      ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                      : watchlistEntry.status === 'completed'
+                      ? 'bg-green-500 hover:bg-green-600 text-white'
+                      : watchlistEntry.status === 'plan-to-watch'
+                      ? 'bg-orange-500 hover:bg-orange-600 text-white'
+                      : 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-primary hover:bg-primary/90 text-white'
                 }`}
               >
-                {isFavorite ? <HeartIconSolid className="w-5 h-5" /> : <HeartIcon className="w-5 h-5" />}
+                {watchlistEntry ? (
+                  <>
+                    {watchlistEntry.status === 'watching' && (
+                      <>
+                        <span className="text-xl">📖</span>
+                        <span>Reading</span>
+                      </>
+                    )}
+                    {watchlistEntry.status === 'completed' && (
+                      <>
+                        <CheckIcon className="w-5 h-5" />
+                        <span>Completed</span>
+                      </>
+                    )}
+                    {watchlistEntry.status === 'plan-to-watch' && (
+                      <>
+                        <span className="text-xl">📌</span>
+                        <span>Plan to Read</span>
+                      </>
+                    )}
+                    {watchlistEntry.status === 'dropped' && (
+                      <>
+                        <span className="text-xl">💔</span>
+                        <span>Dropped</span>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <PlusIcon className="w-5 h-5" />
+                    <span>Add to List</span>
+                  </>
+                )}
               </button>
+              <div className="relative">
+                <button
+                  onClick={handleShare}
+                  className="flex items-center gap-2 bg-dark-200 hover:bg-dark-300 text-white px-4 py-3 rounded-lg font-semibold transition-all"
+                >
+                  <ShareIcon className="w-5 h-5" />
+                </button>
+                {showShareTooltip && (
+                  <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-3 py-1 rounded text-sm whitespace-nowrap flex items-center gap-1">
+                    <CheckIcon className="w-4 h-4" />
+                    Link copied!
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Synopsis */}
@@ -152,9 +265,9 @@ const MangaDetails = () => {
             )}
 
             {/* Recommendations */}
-            {recommendations.length > 0 && (
-              <div className="bg-dark-200 rounded-lg p-6">
-                <h2 className="text-2xl font-bold text-white mb-4">You Might Also Like</h2>
+            <div className="bg-dark-200 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">You Might Also Like</h2>
+              {recommendations.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                   {recommendations.map((rec) => (
                     <Link key={rec.entry.mal_id} to={`/manga/${rec.entry.mal_id}`} className="group">
@@ -167,8 +280,10 @@ const MangaDetails = () => {
                     </Link>
                   ))}
                 </div>
-              </div>
-            )}
+              ) : (
+                <p className="text-gray-400 text-center py-8">No recommendations available at the moment.</p>
+              )}
+            </div>
           </div>
 
           {/* Info Sidebar */}
@@ -205,6 +320,18 @@ const MangaDetails = () => {
           </div>
         </div>
       </div>
+
+      {/* Add to Watchlist Modal */}
+      <AddToWatchlistModal
+        anime={manga}
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        onSuccess={async () => {
+          await checkWatchlistStatus();
+          setShowModal(false);
+        }}
+        isManga={true}
+      />
     </div>
   );
 };

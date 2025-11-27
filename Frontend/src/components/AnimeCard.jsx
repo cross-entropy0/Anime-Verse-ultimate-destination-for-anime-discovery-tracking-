@@ -114,6 +114,7 @@ const AnimeCard = ({ anime, index = 0, type = 'anime' }) => {
         isOpen={showModal}
         onClose={() => setShowModal(false)}
         onSuccess={() => setShowModal(false)}
+        isManga={type === 'manga'}
       />
     </motion.div>
   );

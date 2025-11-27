@@ -84,31 +84,37 @@ const Watchlist = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {watchlist.map((item) => (
+            {watchlist.map((item) => {
+              // Backend returns: item.anime = { ...animeData, malId, isManga }
+              const anime = item.anime || {};
+              const contentPath = anime.isManga ? 'manga' : 'anime';
+              const malId = anime.malId || item.malId;
+              
+              return (
               <div key={item._id} className="bg-dark-200 rounded-lg p-4 flex items-center gap-4 hover:bg-dark-300 transition-colors">
-                <Link to={`/anime/${item.anime?.malId || item.malId}`} className="flex-shrink-0">
+                <Link to={`/${contentPath}/${malId}`} className="flex-shrink-0 ">
                   <img
-                    src={item.anime?.imageUrl || item.animeData?.imageUrl || 'https://via.placeholder.com/80x120'}
-                    alt={item.anime?.title || item.animeData?.title}
+                    src={anime.imageUrl || 'https://via.placeholder.com/80x120'}
+                    alt={anime.title || 'Unknown Title'}
                     className="w-20 h-28 object-cover rounded"
                   />
                 </Link>
-                <div className="flex-1 min-w-0">
-                  <Link to={`/anime/${item.anime?.malId || item.malId}`}>
+                <div className=" flex-1 min-w-0">
+                  <Link to={`/${contentPath}/${malId}`}>
                     <h3 className="text-lg font-semibold text-white mb-1 hover:text-primary transition-colors">
-                      {item.anime?.title || item.animeData?.title || 'Unknown Title'}
+                      {anime.title || 'Unknown Title'}
                     </h3>
                   </Link>
                   {activeTab === 'watching' && (
                     <div className="mb-2">
                       <div className="flex items-center justify-between text-sm text-gray-400 mb-1">
                         <span>Progress</span>
-                        <span>{item.episodesWatched || 0} / {item.anime?.episodes || item.animeData?.episodes || '?'}</span>
+                        <span>{item.episodesWatched || 0} / {anime.episodes || '?'}</span>
                       </div>
                       <div className="w-full bg-dark-100 rounded-full h-2">
                         <div
                           className="bg-primary h-2 rounded-full transition-all"
-                          style={{ width: `${(item.episodesWatched / (item.anime?.episodes || item.animeData?.episodes || 1)) * 100}%` }}
+                          style={{ width: `${Math.min(((item.episodesWatched || 0) / (anime.episodes || 1)) * 100, 100)}%` }}
                         ></div>
                       </div>
                     </div>
@@ -138,13 +144,13 @@ const Watchlist = () => {
                   </button>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </div>
 
       <AddToWatchlistModal
-        anime={editingItem?.anime || editingItem?.animeData}
+        anime={editingItem?.anime ? { ...editingItem.anime, malId: editingItem.anime.malId || editingItem.malId } : null}
         isOpen={showModal}
         onClose={() => {
           setShowModal(false);
@@ -155,6 +161,7 @@ const Watchlist = () => {
           setEditingItem(null);
           fetchWatchlist();
         }}
+        isManga={editingItem?.anime?.isManga || editingItem?.isManga || false}
       />
     </div>
   );

@@ -84,7 +84,48 @@ const searchAnime = async (req, res, next) => {
   try {
     const { q, page = 1, limit = 25, type, status, rating, genre, genres, order_by, sort } = req.query;
 
-    // Build filter object for Jikan API
+    // If searching with filters or specific query, check cache first
+    if (q || status || type || genre || genres) {
+      const query = {};
+      
+      if (q) {
+        query.$or = [
+          { title: { $regex: q, $options: 'i' } },
+          { titleEnglish: { $regex: q, $options: 'i' } },
+          { titleJapanese: { $regex: q, $options: 'i' } }
+        ];
+      }
+      
+      if (status) query.status = status;
+      if (type) query.type = type;
+      if (genre || genres) {
+        const genreList = (genre || genres).split(',');
+        query.genres = { $in: genreList };
+      }
+
+      const skip = (page - 1) * limit;
+      const results = await Anime.find(query)
+        .sort({ score: -1 })
+        .skip(skip)
+        .limit(parseInt(limit));
+      
+      const total = await Anime.countDocuments(query);
+      
+      // If we have good cache results, return them
+      if (results.length > 0) {
+        return res.json({
+          success: true,
+          data: results,
+          pagination: {
+            last_visible_page: Math.ceil(total / limit),
+            has_next_page: (page * limit) < total,
+            current_page: parseInt(page)
+          }
+        });
+      }
+    }
+
+    // Build filter object for Jikan API (for fresh data or cache miss)
     const filters = {
       page,
       limit,
@@ -96,17 +137,30 @@ const searchAnime = async (req, res, next) => {
       sort
     };
 
-    // Try fetching from Jikan API
-    const result = await jikanApi.searchAnime(q || '', filters);
-
-    res.json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination
-    });
+    try {
+      // Fetch from Jikan API for fresh data
+      const result = await jikanApi.searchAnime(q || '', filters);
+      return res.json({
+        success: true,
+        data: result.data,
+        pagination: result.pagination
+      });
+    } catch (apiError) {
+      // If API fails, return any cached data we have
+      console.error('Jikan API error, falling back to cache:', apiError.message);
+      const cachedResults = await Anime.find({})
+        .sort({ score: -1 })
+        .limit(parseInt(limit));
+      
+      return res.json({
+        success: true,
+        data: cachedResults,
+        pagination: { last_visible_page: 1, has_next_page: false },
+        message: 'Showing cached results due to API unavailability'
+      });
+    }
   } catch (error) {
     console.error('Search error:', error.message);
-    // Return empty results instead of failing
     res.json({
       success: true,
       data: [],
@@ -123,20 +177,38 @@ const getAnimeById = async (req, res, next) => {
   try {
     const { id } = req.params;
     
-    // Fetch from Jikan API (includes caching)
-    const anime = await jikanApi.fetchAnimeById(id);
-
-    if (!anime) {
+    // Try to fetch fresh data from Jikan API (with caching inside)
+    try {
+      const anime = await jikanApi.fetchAnimeById(id);
+      if (!anime) {
+        return res.status(404).json({
+          success: false,
+          message: 'Anime not found'
+        });
+      }
+      return res.json({
+        success: true,
+        data: anime
+      });
+    } catch (apiError) {
+      // If API fails, try cache as fallback
+      console.error('API error for anime details, checking cache:', apiError.message);
+      const cached = await Anime.findOne({ malId: parseInt(id) });
+      
+      if (cached) {
+        return res.json({
+          success: true,
+          data: cached,
+          cached: true,
+          message: 'Showing cached data due to API unavailability'
+        });
+      }
+      
       return res.status(404).json({
         success: false,
         message: 'Anime not found'
       });
     }
-
-    res.json({
-      success: true,
-      data: anime
-    });
   } catch (error) {
     if (error.response?.status === 404) {
       return res.status(404).json({
@@ -232,7 +304,8 @@ const getAnimeRecommendations = async (req, res, next) => {
       data: recommendations
     });
   } catch (error) {
-    console.error('Error fetching recommendations:', error.message);
+    console.error(`❌ Error fetching recommendations for anime ${req.params.id}:`, error.message);
+    console.error('Error details:', error.response?.data || error);
     // Return empty array on error instead of failing
     res.json({
       success: true,
@@ -258,7 +331,8 @@ const getAnimeReviews = async (req, res, next) => {
       pagination: result.pagination
     });
   } catch (error) {
-    console.error('Error fetching reviews:', error.message);
+    console.error(`❌ Error fetching reviews for anime ${req.params.id}:`, error.message);
+    console.error('Error details:', error.response?.data || error);
     // Return empty array on error instead of failing
     res.json({
       success: true,
@@ -276,6 +350,31 @@ const getSeasonalAnime = async (req, res, next) => {
   try {
     const { year, season } = req.params;
     
+    // Check MongoDB cache first for this season
+    const seasonMap = {
+      'winter': 'Winter',
+      'spring': 'Spring', 
+      'summer': 'Summer',
+      'fall': 'Fall'
+    };
+    
+    const cached = await Anime.find({
+      year: parseInt(year),
+      season: seasonMap[season.toLowerCase()]
+    }).sort({ score: -1, popularity: 1 }).limit(25);
+    
+    if (cached.length > 0) {
+      return res.json({
+        success: true,
+        data: cached,
+        pagination: {
+          has_next_page: false,
+          current_page: 1
+        }
+      });
+    }
+    
+    // Fallback to API if no cache
     const result = await jikanApi.getSeasonalAnime(year, season);
 
     res.json({
@@ -299,16 +398,66 @@ const getSeasonalAnime = async (req, res, next) => {
 // @access  Public
 const getTopAnime = async (req, res, next) => {
   try {
-    const { page = 1, limit = 25 } = req.query;
-    const parsedLimit = Math.min(parseInt(limit) || 25, 25); // Max 25 per Jikan API
+    const { page = 1, limit = 25, refresh } = req.query;
+    const parsedLimit = Math.min(parseInt(limit) || 25, 100);
     
-    const result = await jikanApi.getTopAnime(page, parsedLimit);
-
-    res.json({
-      success: true,
-      data: result.data,
-      pagination: result.pagination
-    });
+    // Check if cache is fresh (updated in last 24 hours)
+    const cacheAge = await Anime.findOne({ score: { $gt: 0 } })
+      .sort({ lastUpdated: -1 })
+      .select('lastUpdated');
+    
+    const isCacheFresh = cacheAge && (Date.now() - cacheAge.lastUpdated < 24 * 60 * 60 * 1000);
+    
+    // Use cache if fresh and not forcing refresh
+    if (isCacheFresh && !refresh) {
+      const skip = (page - 1) * parsedLimit;
+      const cached = await Anime.find({ score: { $gt: 0 } })
+        .sort({ score: -1, scoredBy: -1 })
+        .skip(skip)
+        .limit(parsedLimit);
+      
+      const total = await Anime.countDocuments({ score: { $gt: 0 } });
+      
+      if (cached.length >= parsedLimit * 0.5) {
+        return res.json({
+          success: true,
+          data: cached,
+          pagination: {
+            last_visible_page: Math.ceil(total / parsedLimit),
+            has_next_page: (page * parsedLimit) < total,
+            current_page: parseInt(page)
+          },
+          cached: true
+        });
+      }
+    }
+    
+    // Fetch fresh data from API if cache is stale or refresh requested
+    try {
+      const result = await jikanApi.getTopAnime(page, Math.min(parsedLimit, 25));
+      return res.json({
+        success: true,
+        data: result.data,
+        pagination: result.pagination,
+        cached: false
+      });
+    } catch (apiError) {
+      // Fallback to cache if API fails
+      console.error('API error, using cache:', apiError.message);
+      const skip = (page - 1) * parsedLimit;
+      const cached = await Anime.find({ score: { $gt: 0 } })
+        .sort({ score: -1, scoredBy: -1 })
+        .skip(skip)
+        .limit(parsedLimit);
+      
+      return res.json({
+        success: true,
+        data: cached,
+        pagination: { last_visible_page: 1, has_next_page: false },
+        cached: true,
+        message: 'Showing cached results due to API unavailability'
+      });
+    }
   } catch (error) {
     console.error('Error fetching top anime:', error.message);
     res.json({

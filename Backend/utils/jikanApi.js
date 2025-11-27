@@ -7,22 +7,22 @@ const JIKAN_BASE_URL = process.env.JIKAN_API_URL || 'https://api.jikan.moe/v4';
 
 // Cache durations in milliseconds
 const CACHE_DURATIONS = {
-  ANIME: 24 * 60 * 60 * 1000,        // 24 hours
-  CHARACTER: 7 * 24 * 60 * 60 * 1000, // 7 days
-  MANGA: 24 * 60 * 60 * 1000,        // 24 hours
-  PICTURES: Infinity,                 // Never expire (URLs stable)
-  EPISODES: 24 * 60 * 60 * 1000,     // 24 hours
-  REVIEWS: 3 * 24 * 60 * 60 * 1000,  // 3 days
-  RECOMMENDATIONS: 7 * 24 * 60 * 60 * 1000, // 7 days
-  SEASONAL: 6 * 60 * 60 * 1000,      // 6 hours
-  TOP: 12 * 60 * 60 * 1000           // 12 hours
+  ANIME: 2 * 60 * 60 * 1000,             // 2 hours
+  CHARACTER: 2 * 60 * 60 * 1000,         // 2 hours
+  MANGA: 2 * 60 * 60 * 1000,             // 2 hours
+  PICTURES: Infinity,                     // Never expire (URLs stable)
+  EPISODES: 2 * 60 * 60 * 1000,          // 2 hours
+  REVIEWS: 2 * 60 * 60 * 1000,           // 2 hours
+  RECOMMENDATIONS: 2 * 60 * 60 * 1000,   // 2 hours
+  SEASONAL: 2 * 60 * 60 * 1000,          // 2 hours
+  TOP: 2 * 60 * 60 * 1000                // 2 hours
 };
 
 // Rate limiting: 3 requests/second, 60/minute
 let lastRequestTime = Date.now();
-const MIN_REQUEST_INTERVAL = 450; // Slower: ~2.2 requests/second
-const MAX_RETRIES = 2; // Reduce retries to fail faster
-const REQUEST_TIMEOUT = 10000; // 10 second timeout
+const MIN_REQUEST_INTERVAL = 200; // Faster: ~5 requests/second (still under Jikan's limit)
+const MAX_RETRIES = 0; // Don't retry - fail fast
+const REQUEST_TIMEOUT = 8000; // 8 second timeout
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -53,18 +53,9 @@ const rateLimitedFetch = async (url, retryCount = 0) => {
     console.error(`Jikan API Error (${url}): ${errorMsg}`);
     
     if (error.response?.status === 429) {
-      // Rate limit hit
-      if (retryCount >= MAX_RETRIES) {
-        console.error(`Max retries (${MAX_RETRIES}) reached for ${url}`);
-        throw new Error('Service temporarily busy. Please try again in a moment.');
-      }
-      
-      // Exponential backoff: 2s, 4s
-      const waitTime = 2000 * Math.pow(2, retryCount);
-      console.log(`Waiting ${waitTime/1000}s before retry ${retryCount + 1}/${MAX_RETRIES}...`);
-      await delay(waitTime);
-      
-      return rateLimitedFetch(url, retryCount + 1);
+      // Rate limit hit - fail fast, don't retry
+      console.error(`Rate limit hit for ${url} - using cached data only`);
+      throw new Error('Rate limit exceeded. Using cached data.');
     }
     
     // For other errors, don't retry

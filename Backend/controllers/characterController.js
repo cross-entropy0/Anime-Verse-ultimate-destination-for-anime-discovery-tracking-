@@ -1,4 +1,5 @@
 const jikanApi = require('../utils/jikanApi');
+const Character = require('../models/Character');
 
 // @desc    Get character by ID
 // @route   GET /api/characters/:id
@@ -7,19 +8,38 @@ const getCharacterById = async (req, res, next) => {
   try {
     const { id } = req.params;
     
-    const character = await jikanApi.fetchCharacterById(id);
-
-    if (!character) {
+    // Try API first with timeout protection
+    try {
+      const character = await jikanApi.fetchCharacterById(id);
+      if (!character) {
+        return res.status(404).json({
+          success: false,
+          message: 'Character not found'
+        });
+      }
+      return res.json({
+        success: true,
+        data: character
+      });
+    } catch (apiError) {
+      // Fallback to cache if API fails
+      console.error('Character API error, checking cache:', apiError.message);
+      const cached = await Character.findOne({ malId: parseInt(id) });
+      
+      if (cached) {
+        return res.json({
+          success: true,
+          data: cached,
+          cached: true
+        });
+      }
+      
+      // No cache either - return 404
       return res.status(404).json({
         success: false,
         message: 'Character not found'
       });
     }
-
-    res.json({
-      success: true,
-      data: character
-    });
   } catch (error) {
     if (error.response?.status === 404) {
       return res.status(404).json({

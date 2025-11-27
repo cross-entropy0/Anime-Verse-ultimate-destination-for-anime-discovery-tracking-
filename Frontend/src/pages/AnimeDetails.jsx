@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { animeService } from '../services/animeService';
+import { watchlistService } from '../services/watchlistService';
+import { useAuth } from '../context/AuthContext';
 import InfoSidebar from '../components/InfoSidebar';
 import ImageGallery from '../components/ImageGallery';
 import CharacterCard from '../components/CharacterCard';
@@ -8,11 +10,14 @@ import Carousel from '../components/Carousel';
 import AnimeCard from '../components/AnimeCard';
 import Loader from '../components/Loader';
 import AddToWatchlistModal from '../components/AddToWatchlistModal';
-import { PlusIcon, HeartIcon, ShareIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
-import { HeartIcon as HeartIconSolid, PlayIcon } from '@heroicons/react/24/solid';
+import { PlusIcon, ShareIcon, ChevronDownIcon, ChevronUpIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { PlayIcon } from '@heroicons/react/24/solid';
 
 const AnimeDetails = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const [anime, setAnime] = useState(null);
   const [characters, setCharacters] = useState([]);
   const [staff, setStaff] = useState([]);
@@ -20,48 +25,144 @@ const AnimeDetails = () => {
   const [recommendations, setRecommendations] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(true);
+  const [loadingReviews, setLoadingReviews] = useState(true);
   const [showFullSynopsis, setShowFullSynopsis] = useState(false);
   const [showStaff, setShowStaff] = useState(false);
-  const [isFavorite, setIsFavorite] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [showShareTooltip, setShowShareTooltip] = useState(false);
+  const [watchlistEntry, setWatchlistEntry] = useState(null);
+  const [checkingWatchlist, setCheckingWatchlist] = useState(false);
 
   useEffect(() => {
+    console.log('[AnimeDetails useEffect] Running with:', { id, isAuthenticated, authLoading });
     const fetchAnimeDetails = async () => {
       try {
         setLoading(true);
 
-        // Fetch main anime data
+        // Fetch main anime data first
         const animeData = await animeService.getById(id);
         setAnime(animeData.data);
 
-        // Fetch characters
+        // Helper function to add delay between requests
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        // Fetch core data sequentially with delays
+        await delay(400);
         const charactersData = await animeService.getCharacters(id);
         setCharacters(charactersData.data || []);
 
-        // Fetch staff
+        await delay(400);
         const staffData = await animeService.getStaff(id);
         setStaff(staffData.data || []);
 
-        // Fetch pictures
+        await delay(400);
         const picturesData = await animeService.getPictures(id);
         setPictures(picturesData.data || []);
 
-        // Fetch recommendations
-        const recsData = await animeService.getRecommendations(id);
-        setRecommendations(recsData.data?.slice(0, 10) || []);
+        // Main content is loaded, set loading to false
+        setLoading(false);
 
-        // Fetch reviews
-        const reviewsData = await animeService.getReviews(id);
-        setReviews(reviewsData.data?.slice(0, 5) || []);
+        // Load recommendations and reviews in background with retry logic
+        fetchRecommendationsWithRetry(id);
+        fetchReviewsWithRetry(id);
       } catch (error) {
         console.error('Error fetching anime details:', error);
-      } finally {
         setLoading(false);
+      }
+    };
+
+    const fetchRecommendationsWithRetry = async (animeId, retries = 2) => {
+      setLoadingRecommendations(true);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1600)); // Wait before fetching
+        const recsData = await animeService.getRecommendations(animeId);
+        console.log('[AnimeDetails] Recommendations data:', recsData);
+        setRecommendations(recsData.data?.slice(0, 10) || []);
+      } catch (error) {
+        console.error('Error fetching recommendations:', error);
+        if (retries > 0) {
+          console.log(`Retrying recommendations... (${retries} attempts left)`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          return fetchRecommendationsWithRetry(animeId, retries - 1);
+        }
+      } finally {
+        setLoadingRecommendations(false);
+      }
+    };
+
+    const fetchReviewsWithRetry = async (animeId, retries = 2) => {
+      setLoadingReviews(true);
+      try {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait before fetching
+        const reviewsData = await animeService.getReviews(animeId);
+        console.log('[AnimeDetails] Reviews data:', reviewsData);
+        setReviews(reviewsData.data?.slice(0, 5) || []);
+      } catch (error) {
+        console.error('Error fetching reviews:', error);
+        if (retries > 0) {
+          console.log(`Retrying reviews... (${retries} attempts left)`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          return fetchReviewsWithRetry(animeId, retries - 1);
+        }
+      } finally {
+        setLoadingReviews(false);
       }
     };
 
     fetchAnimeDetails();
   }, [id]);
+
+  // Separate useEffect for watchlist status check
+  useEffect(() => {
+    console.log('[AnimeDetails watchlist check] Auth state:', { isAuthenticated, authLoading });
+    if (!authLoading && isAuthenticated) {
+      console.log('[AnimeDetails] Checking watchlist status...');
+      checkWatchlistStatus();
+    } else {
+      console.log('[AnimeDetails] Skipping watchlist check:', { authLoading, isAuthenticated });
+      // Clear watchlist entry if not authenticated
+      if (!authLoading && !isAuthenticated) {
+        setWatchlistEntry(null);
+      }
+    }
+  }, [id, isAuthenticated, authLoading]);
+
+  // Scroll to hash anchor (e.g., #trailer) after page loads
+  useEffect(() => {
+    if (!loading && location.hash) {
+      // Wait a bit for content to render, then scroll
+      const timer = setTimeout(() => {
+        const element = document.querySelector(location.hash);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [loading, location.hash]);
+
+  const checkWatchlistStatus = async () => {
+    try {
+      setCheckingWatchlist(true);
+      const entry = await watchlistService.checkInWatchlist(parseInt(id));
+      console.log('Watchlist check for malId:', parseInt(id), 'Result:', entry);
+      setWatchlistEntry(entry);
+    } catch (error) {
+      console.error('Error checking watchlist:', error);
+    } finally {
+      setCheckingWatchlist(false);
+    }
+  };
+
+  const handleAddToList = () => {
+    if (!isAuthenticated) {
+      // Redirect to login with return URL
+      navigate('/login', { state: { from: `/anime/${id}` } });
+      return;
+    }
+    setShowModal(true);
+  };
 
   if (loading) {
     return <Loader fullScreen />;
@@ -86,6 +187,25 @@ const AnimeDetails = () => {
   const trailerUrl = anime.trailerUrl || anime.trailer?.embed_url;
   const synopsis = anime.synopsis || 'No synopsis available.';
   const shouldTruncateSynopsis = synopsis.length > 300;
+
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: anime.title,
+          text: `Check out ${anime.title} on AnimeVerse!`,
+          url: url,
+        });
+      } catch (err) {
+        console.log('Share canceled');
+      }
+    } else {
+      navigator.clipboard.writeText(url);
+      setShowShareTooltip(true);
+      setTimeout(() => setShowShareTooltip(false), 2000);
+    }
+  };
 
   return (
     <div className="min-h-screen">
@@ -139,26 +259,68 @@ const AnimeDetails = () => {
               {/* Action Buttons */}
               <div className="flex flex-wrap gap-3">
                 <button 
-                  onClick={() => setShowModal(true)}
-                  className="flex items-center gap-2 bg-primary hover:bg-primary/90 text-white px-5 py-2.5 rounded-lg font-semibold transition-all duration-300 hover:scale-105 shadow-lg"
+                  onClick={handleAddToList}
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-semibold transition-all duration-300 hover:scale-105 shadow-lg ${
+                    watchlistEntry
+                      ? watchlistEntry.status === 'watching'
+                        ? 'bg-blue-500 hover:bg-blue-600 text-white'
+                        : watchlistEntry.status === 'completed'
+                        ? 'bg-green-500 hover:bg-green-600 text-white'
+                        : watchlistEntry.status === 'plan-to-watch'
+                        ? 'bg-orange-500 hover:bg-orange-600 text-white'
+                        : 'bg-red-500 hover:bg-red-600 text-white'
+                      : 'bg-primary hover:bg-primary/90 text-white'
+                  }`}
                 >
-                  <PlusIcon className="w-5 h-5" />
-                  <span>Add to List</span>
-                </button>
-                <button
-                  onClick={() => setIsFavorite(!isFavorite)}
-                  className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-5 py-2.5 rounded-lg font-semibold transition-all duration-300 border border-white/20"
-                >
-                  {isFavorite ? (
-                    <HeartIconSolid className="w-5 h-5 text-red-500" />
+                  {watchlistEntry ? (
+                    <>
+                      {watchlistEntry.status === 'watching' && (
+                        <>
+                          <span className="text-xl">👁️</span>
+                          <span>Watching</span>
+                        </>
+                      )}
+                      {watchlistEntry.status === 'completed' && (
+                        <>
+                          <CheckIcon className="w-5 h-5" />
+                          <span>Completed</span>
+                        </>
+                      )}
+                      {watchlistEntry.status === 'plan-to-watch' && (
+                        <>
+                          <span className="text-xl">📌</span>
+                          <span>Plan to Watch</span>
+                        </>
+                      )}
+                      {watchlistEntry.status === 'dropped' && (
+                        <>
+                          <span className="text-xl">💔</span>
+                          <span>Dropped</span>
+                        </>
+                      )}
+                    </>
                   ) : (
-                    <HeartIcon className="w-5 h-5" />
+                    <>
+                      <PlusIcon className="w-5 h-5" />
+                      <span>Add to List</span>
+                    </>
                   )}
-                  <span>Favorite</span>
                 </button>
-                <button className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white p-2.5 rounded-lg transition-all duration-300 border border-white/20">
-                  <ShareIcon className="w-5 h-5" />
-                </button>
+                <div className="relative">
+                  <button 
+                    onClick={handleShare}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white px-4 py-2.5 rounded-lg transition-all duration-300 border border-white/20"
+                  >
+                    <ShareIcon className="w-5 h-5" />
+                    <span>Share</span>
+                  </button>
+                  {showShareTooltip && (
+                    <div className="absolute -top-10 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-3 py-1 rounded text-sm whitespace-nowrap flex items-center gap-1">
+                      <CheckIcon className="w-4 h-4" />
+                      Link copied!
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -202,7 +364,7 @@ const AnimeDetails = () => {
 
             {/* Trailer Card */}
             {trailerUrl && (
-              <section className="bg-dark-200 rounded-lg p-6">
+              <section id="trailer" className="bg-dark-200 rounded-lg p-6">
                 <h2 className="text-2xl font-bold text-white mb-4">Trailer</h2>
                 <div className="aspect-video rounded-lg overflow-hidden bg-black">
                   <iframe
@@ -210,6 +372,9 @@ const AnimeDetails = () => {
                     title="Anime Trailer"
                     className="w-full h-full"
                     allowFullScreen
+                    loading="lazy"
+                    autoplay={false}
+                    muted
                   ></iframe>
                 </div>
               </section>
@@ -270,13 +435,18 @@ const AnimeDetails = () => {
             )}
 
             {/* MAL Reviews Section */}
-            {reviews.length > 0 && (
-              <section className="bg-dark-200 rounded-lg p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <h2 className="text-2xl font-bold text-white">Reviews from MyAnimeList</h2>
-                  <img src="https://cdn.myanimelist.net/img/sp/icon/apple-touch-icon-256.png" alt="MAL" className="w-6 h-6" />
+            <section className="bg-dark-200 rounded-lg p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <h2 className="text-2xl font-bold text-white">Reviews from MyAnimeList</h2>
+                <img src="https://cdn.myanimelist.net/img/sp/icon/apple-touch-icon-256.png" alt="MAL" className="w-6 h-6" />
+              </div>
+              {loadingReviews ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
                 </div>
-                <div className="space-y-4">
+              ) : reviews.length > 0 ? (
+                <>
+                  <div className="space-y-4">
                   {reviews.map((review, index) => (
                     <div key={index} className="p-4 bg-dark-100 rounded-lg">
                       <div className="flex items-center gap-3 mb-3">
@@ -317,20 +487,29 @@ const AnimeDetails = () => {
                 >
                   View All Reviews on MyAnimeList →
                 </a>
-              </section>
-            )}
+                </>
+              ) : (
+                <p className="text-gray-400 text-center py-8">No reviews available at the moment.</p>
+              )}
+            </section>
 
             {/* Recommendations Section */}
-            {recommendations.length > 0 && (
-              <section className="bg-dark-200 rounded-lg p-6">
-                <h2 className="text-2xl font-bold text-white mb-4">You Might Also Like</h2>
+            <section className="bg-dark-200 rounded-lg p-6">
+              <h2 className="text-2xl font-bold text-white mb-4">You Might Also Like</h2>
+              {loadingRecommendations ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                </div>
+              ) : recommendations.length > 0 ? (
                 <Carousel
                   items={recommendations}
                   slidesToShow={5}
                   renderItem={(rec) => <AnimeCard anime={rec.entry} />}
                 />
-              </section>
-            )}
+              ) : (
+                <p className="text-gray-400 text-center py-8">No recommendations available at the moment.</p>
+              )}
+            </section>
           </div>
 
           {/* Right Column - Sidebar */}
@@ -344,7 +523,10 @@ const AnimeDetails = () => {
         anime={anime}
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        onSuccess={() => setShowModal(false)}
+        onSuccess={async () => {
+          await checkWatchlistStatus();
+          setShowModal(false);
+        }}
       />
     </div>
   );

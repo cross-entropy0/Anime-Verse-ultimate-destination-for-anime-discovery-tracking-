@@ -36,8 +36,15 @@ export const watchlistService = {
     try {
       const response = await api.get('/watchlist');
       const watchlist = response.data.data || [];
-      return watchlist.find(item => item.malId === malId) || null;
+      console.log('Checking watchlist for malId:', malId);
+      console.log('Watchlist malIds:', watchlist.map(item => item.malId));
+      // Ensure type consistency - convert both to numbers for comparison
+      const numericMalId = parseInt(malId);
+      const found = watchlist.find(item => parseInt(item.malId) === numericMalId);
+      console.log('Found entry:', found ? 'YES' : 'NO');
+      return found || null;
     } catch (error) {
+      console.error('Error checking watchlist:', error);
       return null;
     }
   },
